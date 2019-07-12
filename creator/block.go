@@ -96,6 +96,41 @@ func NewBlockFromPage(page *model.PdfPage) (*Block, error) {
 	return b, nil
 }
 
+// NewBlockFromPage creates a Block from a PDF Page.  Useful for loading template pages as blocks
+// from a PDF document and additional content with the creator.
+func NewBlockFromPageBox(page *model.PdfPage, mbox *model.PdfRectangle) (*Block, error) {
+	b := &Block{}
+
+	content, err := page.GetAllContentStreams()
+	if err != nil {
+		return nil, err
+	}
+
+	contentParser := contentstream.NewContentStreamParser(content)
+	operations, err := contentParser.Parse()
+	if err != nil {
+		return nil, err
+	}
+	operations.WrapIfNeeded()
+
+	b.contents = operations
+
+	if page.Resources != nil {
+		b.resources = page.Resources
+	} else {
+		b.resources = model.NewPdfPageResources()
+	}
+
+	if mbox.Llx != 0 || mbox.Lly != 0 {
+		// Account for media box offset if any.
+		b.translate(-mbox.Llx, mbox.Lly)
+	}
+	b.width = mbox.Urx - mbox.Llx
+	b.height = mbox.Ury - mbox.Lly
+
+	return b, nil
+}
+
 // SetAngle sets the rotation angle in degrees.
 func (blk *Block) SetAngle(angleDeg float64) {
 	blk.angle = angleDeg

@@ -405,6 +405,57 @@ func (p *PdfPage) GetMediaBox() (*PdfRectangle, error) {
 	return nil, errors.New("media box not defined")
 }
 
+// GetBox gets the inheritable media box value, either from the page
+// or a higher up page/pages struct.
+func (p *PdfPage) GetBox(boxname string) (box *PdfRectangle, err error) {
+
+	switch boxname {
+	case "MediaBox":
+		box = p.MediaBox
+	case "BleedBox":
+		box = p.BleedBox
+	case "TrimBox":
+		box = p.TrimBox
+	case "CropBox":
+		box = p.CropBox
+	case "ArtBox":
+		box = p.ArtBox
+	default:
+		err = fmt.Errorf("invalid box name %s", boxname)
+		return
+	}
+
+	if box != nil {
+		return box, nil
+	}
+
+	node := p.Parent
+	for node != nil {
+		dict, ok := core.GetDict(node)
+		if !ok {
+			return nil, errors.New("invalid parent objects dictionary")
+		}
+
+		if obj := dict.Get(core.PdfObjectName(boxname)); obj != nil {
+			arr, ok := obj.(*core.PdfObjectArray)
+			if !ok {
+				return nil, errors.New("invalid media box")
+			}
+			rect, err := NewPdfRectangle(*arr)
+
+			if err != nil {
+				return nil, err
+			}
+
+			return rect, nil
+		}
+
+		node = dict.Get(core.PdfObjectName("Parent"))
+	}
+
+	return nil, fmt.Errorf("box %s not defined", boxname)
+}
+
 // getParentResources searches for page resources in the parent nodes of the page.
 func (p *PdfPage) getParentResources() (*PdfPageResources, error) {
 	node := p.Parent
