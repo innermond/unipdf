@@ -264,13 +264,15 @@ func (blk *Block) translate(tx, ty float64) {
 }
 
 // translate translates the block, moving block contents on the PDF. For internal use.
-func (blk *Block) Clip(x, y, width, height float64) {
-	ops := contentstream.NewContentCreator().
-		Add_q().
+func (blk *Block) Clip(x, y, width, height float64, outline bool) {
+	k := contentstream.NewContentCreator()
+	k.Add_q().
 		Add_re(x, y, width, height).
-		Add_W().
-		Add_n().
-		Operations()
+		Add_W()
+	if outline {
+		k.Add_S()
+	}
+	ops := k.Add_n().Operations()
 
 	*blk.contents = append(*ops, *blk.contents...)
 	blk.contents.WrapIfNeeded()
