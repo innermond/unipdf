@@ -403,7 +403,7 @@ func (w *PdfWriter) SetOCProperties(ocProperties core.PdfObject) error {
 		common.Log.Trace("Setting OC Properties...")
 		dict.Set("OCProperties", ocProperties)
 		// Any risk of infinite loops?
-		w.addObjects(ocProperties)
+		return w.addObjects(ocProperties)
 	}
 
 	return nil
@@ -418,8 +418,7 @@ func (w *PdfWriter) SetNamedDestinations(names core.PdfObject) error {
 
 	common.Log.Trace("Setting catalog Names...")
 	w.catalog.Set("Names", names)
-	w.addObjects(names)
-	return nil
+	return w.addObjects(names)
 }
 
 // SetOptimizer sets the optimizer to optimize PDF before writing.
@@ -487,8 +486,7 @@ func (w *PdfWriter) addObjects(obj core.PdfObject) error {
 		common.Log.Trace("Dict")
 		common.Log.Trace("- %s", obj)
 		for _, k := range dict.Keys() {
-			v := dict.Get(k)
-			common.Log.Trace("Key %s", k)
+			v := core.ResolveReference(dict.Get(k))
 			if k != "Parent" {
 				err := w.addObjects(v)
 				if err != nil {
@@ -526,7 +524,7 @@ func (w *PdfWriter) addObjects(obj core.PdfObject) error {
 			return errors.New("array is nil")
 		}
 		for _, v := range arr.Elements() {
-			err := w.addObjects(v)
+			err := w.addObjects(core.ResolveReference(v))
 			if err != nil {
 				return err
 			}
@@ -548,47 +546,37 @@ func (w *PdfWriter) AddPage(page *PdfPage) error {
 	procPage(page)
 	obj := page.ToPdfObject()
 
-	// Resolve references for page resources, if page reader is lazy.
-	if resources := page.Resources; resources != nil {
-		if r := page.reader; r != nil && r.isLazy {
-			err := r.traverseObjectData(resources.GetContainingPdfObject())
-			if err != nil {
-				return err
-			}
-		}
-	}
-
 	common.Log.Trace("==========")
 	common.Log.Trace("Appending to page list %T", obj)
 
-	pageObj, ok := obj.(*core.PdfIndirectObject)
+	pageObj, ok := core.GetIndirect(obj)
 	if !ok {
 		return errors.New("page should be an indirect object")
 	}
 	common.Log.Trace("%s", pageObj)
 	common.Log.Trace("%s", pageObj.PdfObject)
 
-	pDict, ok := pageObj.PdfObject.(*core.PdfObjectDictionary)
+	pDict, ok := core.GetDict(pageObj.PdfObject)
 	if !ok {
 		return errors.New("page object should be a dictionary")
 	}
 
-	otype, ok := pDict.Get("Type").(*core.PdfObjectName)
+	otype, ok := core.GetName(pDict.Get("Type"))
 	if !ok {
 		return fmt.Errorf("page should have a Type key with a value of type name (%T)", pDict.Get("Type"))
 
 	}
-	if *otype != "Page" {
+	if otype.String() != "Page" {
 		return errors.New("field Type != Page (Required)")
 	}
 
 	// Copy inherited fields if missing.
 	inheritedFields := []core.PdfObjectName{"Resources", "MediaBox", "CropBox", "Rotate"}
-	parent, hasParent := pDict.Get("Parent").(*core.PdfIndirectObject)
+	parent, hasParent := core.GetIndirect(pDict.Get("Parent"))
 	common.Log.Trace("Page Parent: %T (%v)", pDict.Get("Parent"), hasParent)
 	for hasParent {
 		common.Log.Trace("Page Parent: %T", parent)
-		parentDict, ok := parent.PdfObject.(*core.PdfObjectDictionary)
+		parentDict, ok := core.GetDict(parent.PdfObject)
 		if !ok {
 			return errors.New("invalid Parent object")
 		}
@@ -605,7 +593,7 @@ func (w *PdfWriter) AddPage(page *PdfPage) error {
 				pDict.Set(field, obj)
 			}
 		}
-		parent, hasParent = parentDict.Get("Parent").(*core.PdfIndirectObject)
+		parent, hasParent = core.GetIndirect(parentDict.Get("Parent"))
 		common.Log.Trace("Next parent: %T", parentDict.Get("Parent"))
 	}
 
@@ -617,16 +605,16 @@ func (w *PdfWriter) AddPage(page *PdfPage) error {
 	pageObj.PdfObject = pDict
 
 	// Add to Pages.
-	pagesDict, ok := w.pages.PdfObject.(*core.PdfObjectDictionary)
+	pagesDict, ok := core.GetDict(w.pages.PdfObject)
 	if !ok {
 		return errors.New("invalid Pages obj (not a dict)")
 	}
-	kids, ok := pagesDict.Get("Kids").(*core.PdfObjectArray)
+	kids, ok := core.GetArray(pagesDict.Get("Kids"))
 	if !ok {
 		return errors.New("invalid Pages Kids obj (not an array)")
 	}
 	kids.Append(pageObj)
-	pageCount, ok := pagesDict.Get("Count").(*core.PdfObjectInteger)
+	pageCount, ok := core.GetInt(pagesDict.Get("Count"))
 	if !ok {
 		return errors.New("invalid Pages Count object (not an integer)")
 	}
@@ -831,7 +819,7 @@ func (w *PdfWriter) updateObjectNumbers() {
 			o.ObjectNumber = objNum
 			o.GenerationNumber = 0
 		default:
-			common.Log.Debug("ERROR: Unknown type %T - skipping")
+			common.Log.Debug("ERROR: Unknown type %T - skipping", o)
 			continue
 		}
 

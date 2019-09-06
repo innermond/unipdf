@@ -20,6 +20,8 @@ import (
 // content onto imported PDF pages, etc.
 type Creator struct {
 	pages      []*model.PdfPage
+	pageBlocks map[*model.PdfPage]*Block
+
 	activePage *model.PdfPage
 
 	pagesize PageSize
@@ -54,6 +56,9 @@ type Creator struct {
 	// Outline.
 	outline *model.Outline
 
+	// External outlines.
+	externalOutline *model.PdfOutlineTreeNode
+
 	// Forms.
 	acroForm *model.PdfAcroForm
 
@@ -68,6 +73,13 @@ type Creator struct {
 func (c *Creator) SetForms(form *model.PdfAcroForm) error {
 	c.acroForm = form
 	return nil
+}
+
+// SetOutlineTree adds the specified outline tree to the PDF file generated
+// by the creator. Adding an external outline tree disables the automatic
+// generation of outlines done by the creator for the relevant components.
+func (c *Creator) SetOutlineTree(outlineTree *model.PdfOutlineTreeNode) {
+	c.externalOutline = outlineTree
 }
 
 // FrontpageFunctionArgs holds the input arguments to a front page drawing function.
@@ -106,6 +118,7 @@ type margins struct {
 func New() *Creator {
 	c := &Creator{}
 	c.pages = []*model.PdfPage{}
+	c.pageBlocks = map[*model.PdfPage]*Block{}
 	c.SetPageSize(PageSizeLetter)
 
 	m := 0.1 * c.pageWidth
@@ -503,6 +516,15 @@ func (c *Creator) finalize() error {
 				return err
 			}
 		}
+
+		// Draw blocks to pages.
+		block, ok := c.pageBlocks[page]
+		if !ok {
+			return errors.New("could not find page block")
+		}
+		if err := block.drawToPage(page); err != nil {
+			return err
+		}
 	}
 
 	c.finalized = true
@@ -549,15 +571,21 @@ func (c *Creator) Draw(d Drawable) error {
 		return err
 	}
 
-	for idx, blk := range blocks {
+	for idx, block := range blocks {
 		if idx > 0 {
 			c.NewPage()
 		}
 
-		p := c.getActivePage()
-		err := blk.drawToPage(p)
-		if err != nil {
-			return err
+		page := c.getActivePage()
+		if pageBlock, ok := c.pageBlocks[page]; ok {
+			if err := pageBlock.mergeBlocks(block); err != nil {
+				return err
+			}
+			if err := mergeResources(block.resources, pageBlock.resources); err != nil {
+				return err
+			}
+		} else {
+			c.pageBlocks[page] = block
 		}
 	}
 
@@ -588,7 +616,9 @@ func (c *Creator) Write(ws io.Writer) error {
 	}
 
 	// Outlines.
-	if c.outline != nil && c.AddOutlines {
+	if c.externalOutline != nil {
+		pdfWriter.AddOutlineTree(c.externalOutline)
+	} else if c.outline != nil && c.AddOutlines {
 		pdfWriter.AddOutlineTree(&c.outline.ToPdfOutline().PdfOutlineTreeNode)
 	}
 
